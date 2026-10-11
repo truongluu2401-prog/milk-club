@@ -2,9 +2,7 @@
 const express = require("express");
 const cors = require("cors");
 const multer = require("multer");
-const path = require("path");
-const fs = require("fs");
-const crypto = require("crypto");
+const { v2: cloudinary } = require("cloudinary");
 
 require("dotenv").config();
 
@@ -20,13 +18,11 @@ const {
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// ================= CẤU HÌNH =================
+// ================= CẤU HÌNH CORS =================
 
 const BACKEND_URL = (
   process.env.BACKEND_URL ||
-  (process.env.NODE_ENV === "production"
-    ? "https://milk-club.onrender.com"
-    : `http://localhost:${PORT}`)
+  "https://milk-club.onrender.com"
 ).replace(/\/$/, "");
 
 const allowedOrigins = [
@@ -58,33 +54,18 @@ app.use(express.json());
 app.use("/api/auth", authRoutes);
 app.use("/api/orders", orderRoutes);
 
-// ================= UPLOAD ẢNH =================
+// ================= CLOUDINARY =================
 
-const uploadDir = path.join(__dirname, "uploads");
-
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-}
-
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, uploadDir);
-  },
-
-  filename: (req, file, cb) => {
-    const extension = {
-      "image/jpeg": ".jpg",
-      "image/png": ".png",
-      "image/webp": ".webp",
-    }[file.mimetype];
-
-    const uniqueName = crypto.randomUUID() + extension;
-    cb(null, uniqueName);
-  },
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+  secure: true,
 });
 
+// Dùng bộ nhớ tạm, không lưu ảnh vào Render
 const upload = multer({
-  storage,
+  storage: multer.memoryStorage(),
 
   limits: {
     fileSize: 5 * 1024 * 1024,
@@ -107,8 +88,7 @@ const upload = multer({
   },
 });
 
-app.use("/uploads", express.static(uploadDir));
-
+// Middleware nhận file ảnh
 function uploadImage(req, res, next) {
   upload.single("image")(req, res, (err) => {
     if (err) {
@@ -124,45 +104,63 @@ function uploadImage(req, res, next) {
   });
 }
 
-// Xóa ảnh mới nếu lưu sản phẩm thất bại
-function removeUploadedFile(file) {
-  if (!file) return;
+// Tải ảnh lên Cloudinary
+function uploadToCloudinary(file) {
+  return new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      {
+        folder: "milk-club/products",
+        resource_type: "image",
+      },
+      (error, result) => {
+        if (error) {
+          return reject(error);
+        }
 
-  fs.unlink(file.path, (err) => {
-    if (err && err.code !== "ENOENT") {
-      console.error("Lỗi xóa ảnh:", err);
-    }
+        resolve(result);
+      }
+    );
+
+    stream.end(file.buffer);
   });
 }
 
-// Xóa ảnh cũ trong thư mục uploads
-function removeLocalImage(imageUrl) {
-  if (!imageUrl) return;
+// Lấy public_id từ URL Cloudinary do ứng dụng tạo
+function getCloudinaryPublicId(imageUrl) {
+  if (!imageUrl || typeof imageUrl !== "string") {
+    return null;
+  }
 
-  const prefix = "/uploads/";
-  const index = imageUrl.indexOf(prefix);
+  try {
+    const url = new URL(imageUrl);
 
-  if (index === -1) return;
+    if (url.hostname !== "res.cloudinary.com") {
+      return null;
+    }
 
-  const filename = imageUrl
-    .slice(index + prefix.length)
-    .split(/[?#]/)[0];
+    const match = url.pathname.match(
+      /\/image\/upload\/(?:v\d+\/)?(milk-club\/products\/[^/]+)\.[a-zA-Z0-9]+$/
+    );
 
-  if (
-    !filename ||
-    filename.includes("/") ||
-    filename.includes("\\")
-  ) {
+    return match ? match[1] : null;
+  } catch {
+    return null;
+  }
+}
+
+// Xóa ảnh Cloudinary cũ
+async function removeCloudinaryImage(imageUrl) {
+  const publicId = getCloudinaryPublicId(imageUrl);
+
+  if (!publicId) {
     return;
   }
 
-  const filePath = path.join(uploadDir, filename);
-
-  fs.unlink(filePath, (err) => {
-    if (err && err.code !== "ENOENT") {
-      console.error("Lỗi xóa ảnh cũ:", err);
-    }
-  });
+  try {
+    await cloudinary.uploader.destroy(publicId);
+  } catch (error) {
+    console.error("Không thể xóa ảnh Cloudinary:", error);
+  }
 }
 
 // ================= HÀM HỖ TRỢ =================
@@ -276,7 +274,8 @@ app.get("/api/products", async (req, res) => {
   }
 });
 
-// Lấy chi tiết sản phẩm
+// ================= CHI TIẾT SẢN PHẨM =================
+
 app.get("/api/products/:id", async (req, res) => {
   const id = getProductId(req);
 
@@ -319,20 +318,25 @@ app.post(
     const product = validateProduct(req.body);
 
     if (!product) {
-      removeUploadedFile(req.file);
-
       return res.status(400).json({
         message: "Thông tin sản phẩm không hợp lệ",
       });
     }
 
-    const image = req.file
-      ? `${BACKEND_URL}/uploads/${req.file.filename}`
-      : typeof req.body.image === "string"
-      ? req.body.image.trim()
-      : "";
+    let uploadedImage = null;
 
     try {
+      let image =
+        typeof req.body.image === "string"
+          ? req.body.image.trim()
+          : "";
+
+      // Nếu có file ảnh thì tải lên Cloudinary
+      if (req.file) {
+        uploadedImage = await uploadToCloudinary(req.file);
+        image = uploadedImage.secure_url;
+      }
+
       const result = await pool.query(
         `INSERT INTO products
           (name, description, category, price, old_price, image, stock)
@@ -354,7 +358,12 @@ app.post(
         product: formatProduct(result.rows[0]),
       });
     } catch (error) {
-      removeUploadedFile(req.file);
+      if (uploadedImage) {
+        await removeCloudinaryImage(
+          uploadedImage.secure_url
+        );
+      }
+
       console.error("Lỗi thêm sản phẩm:", error);
 
       return res.status(500).json({
@@ -376,12 +385,12 @@ app.put(
     const product = validateProduct(req.body);
 
     if (!id || !product) {
-      removeUploadedFile(req.file);
-
       return res.status(400).json({
         message: "Thông tin sản phẩm không hợp lệ",
       });
     }
+
+    let uploadedImage = null;
 
     try {
       const existing = await pool.query(
@@ -390,18 +399,19 @@ app.put(
       );
 
       if (existing.rows.length === 0) {
-        removeUploadedFile(req.file);
-
         return res.status(404).json({
           message: "Không tìm thấy sản phẩm",
         });
       }
 
       const oldImage = existing.rows[0].image;
+      let image = oldImage;
 
-      const image = req.file
-        ? `${BACKEND_URL}/uploads/${req.file.filename}`
-        : oldImage;
+      // Nếu chọn ảnh mới thì upload lên Cloudinary
+      if (req.file) {
+        uploadedImage = await uploadToCloudinary(req.file);
+        image = uploadedImage.secure_url;
+      }
 
       const result = await pool.query(
         `UPDATE products
@@ -426,8 +436,9 @@ app.put(
         ]
       );
 
-      if (req.file) {
-        removeLocalImage(oldImage);
+      // Chỉ xóa ảnh Cloudinary cũ khi cập nhật thành công
+      if (uploadedImage) {
+        await removeCloudinaryImage(oldImage);
       }
 
       return res.json({
@@ -435,7 +446,12 @@ app.put(
         product: formatProduct(result.rows[0]),
       });
     } catch (error) {
-      removeUploadedFile(req.file);
+      if (uploadedImage) {
+        await removeCloudinaryImage(
+          uploadedImage.secure_url
+        );
+      }
+
       console.error("Lỗi sửa sản phẩm:", error);
 
       return res.status(500).json({
@@ -472,7 +488,9 @@ app.delete(
         });
       }
 
-      removeLocalImage(result.rows[0].image);
+      await removeCloudinaryImage(
+        result.rows[0].image
+      );
 
       return res.json({
         message: "Xóa sản phẩm thành công",
