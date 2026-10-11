@@ -10,7 +10,7 @@ import {
   Loader2,
 } from "lucide-react";
 
-const API_URL = "http://localhost:5000";
+const API_URL = "http://https://milk-club.onrender.com";
 
 export default function EditProduct() {
   const { id } = useParams();

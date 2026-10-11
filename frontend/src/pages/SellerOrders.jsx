@@ -13,7 +13,7 @@ import {
   Package,
 } from "lucide-react";
 
-const API_URL = "http://localhost:5000";
+const API_URL = "http://https://milk-club.onrender.com";
 
 const statusLabels = {
   pending: "Chờ xác nhận",

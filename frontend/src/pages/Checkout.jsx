@@ -4,7 +4,7 @@ import { Link, useNavigate } from "react-router-dom";
 import axios from "axios";
 import { useCart } from "../context/CartContext";
 
-const API_URL = "http://localhost:5000";
+const API_URL = "http://https://milk-club.onrender.com";
 
 const money = (value) =>
   new Intl.NumberFormat("vi-VN", {

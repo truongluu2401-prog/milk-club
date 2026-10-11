@@ -14,7 +14,7 @@ import {
   ImageOff,
 } from "lucide-react";
 
-const API_URL = "http://localhost:5000";
+const API_URL = "http://https://milk-club.onrender.com";
 
 export default function SellerProducts() {
   const token = localStorage.getItem("token");

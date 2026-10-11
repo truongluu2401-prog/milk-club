@@ -64,7 +64,7 @@ export default function Register() {
 
     try {
       await axios.post(
-        "http://localhost:5000/api/auth/register",
+        "http://https://milk-club.onrender.com/api/auth/register",
         {
           full_name: form.full_name.trim(),
           email: form.email.trim(),
