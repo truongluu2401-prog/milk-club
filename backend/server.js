@@ -22,9 +22,20 @@ const PORT = process.env.PORT || 5000;
 
 // ================= CẤU HÌNH =================
 
+const allowedOrigins = [
+  "http://localhost:5173",
+  process.env.FRONTEND_URL,
+].filter(Boolean);
+
 app.use(
   cors({
-    origin: "http://localhost:5173",
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      callback(new Error("Origin không được phép"));
+    },
   })
 );
 
@@ -475,6 +486,6 @@ app.delete(
 
 app.listen(PORT, () => {
   console.log(
-    `Milk.shop Backend đang chạy tại http://localhost:${PORT}`
+    `Milk.club Backend đang chạy tại http://localhost:${PORT}`
   );
 });
