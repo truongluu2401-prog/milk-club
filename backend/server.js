@@ -22,10 +22,20 @@ const PORT = process.env.PORT || 5000;
 
 // ================= CẤU HÌNH =================
 
+const BACKEND_URL = (
+  process.env.BACKEND_URL ||
+  (process.env.NODE_ENV === "production"
+    ? "https://milk-club.onrender.com"
+    : `http://localhost:${PORT}`)
+).replace(/\/$/, "");
+
 const allowedOrigins = [
   "http://localhost:5173",
+  "https://milk-club.vercel.app",
   process.env.FRONTEND_URL,
-].filter(Boolean);
+]
+  .filter(Boolean)
+  .map((origin) => origin.replace(/\/$/, ""));
 
 app.use(
   cors({
@@ -34,26 +44,28 @@ app.use(
         return callback(null, true);
       }
 
-      callback(new Error("Origin không được phép"));
+      return callback(
+        new Error("Origin không được phép: " + origin)
+      );
     },
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
 
 app.use(express.json());
 
 app.use("/api/auth", authRoutes);
-
 app.use("/api/orders", orderRoutes);
+
 // ================= UPLOAD ẢNH =================
 
-// Tạo thư mục lưu ảnh nếu chưa có
 const uploadDir = path.join(__dirname, "uploads");
 
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
 
-// Cấu hình nơi lưu file
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     cb(null, uploadDir);
@@ -67,12 +79,10 @@ const storage = multer.diskStorage({
     }[file.mimetype];
 
     const uniqueName = crypto.randomUUID() + extension;
-
     cb(null, uniqueName);
   },
 });
 
-// Chỉ cho phép ảnh JPG, PNG, WEBP
 const upload = multer({
   storage,
 
@@ -97,13 +107,8 @@ const upload = multer({
   },
 });
 
-// Cho phép trình duyệt xem ảnh
-app.use(
-  "/uploads",
-  express.static(uploadDir)
-);
+app.use("/uploads", express.static(uploadDir));
 
-// Middleware xử lý lỗi upload
 function uploadImage(req, res, next) {
   upload.single("image")(req, res, (err) => {
     if (err) {
@@ -119,7 +124,7 @@ function uploadImage(req, res, next) {
   });
 }
 
-// Xóa ảnh được tải lên nếu lưu dữ liệu thất bại
+// Xóa ảnh mới nếu lưu sản phẩm thất bại
 function removeUploadedFile(file) {
   if (!file) return;
 
@@ -143,7 +148,6 @@ function removeLocalImage(imageUrl) {
     .slice(index + prefix.length)
     .split(/[?#]/)[0];
 
-  // Chỉ xóa file nằm trực tiếp trong uploads
   if (
     !filename ||
     filename.includes("/") ||
@@ -163,7 +167,6 @@ function removeLocalImage(imageUrl) {
 
 // ================= HÀM HỖ TRỢ =================
 
-// Đổi dữ liệu PostgreSQL sang định dạng Frontend
 function formatProduct(p) {
   return {
     id: p.id,
@@ -171,16 +174,23 @@ function formatProduct(p) {
     description: p.description,
     category: p.category,
     price: Number(p.price),
+
     oldPrice:
       p.old_price == null
         ? null
         : Number(p.old_price),
-    image: p.image,
+
+    image: p.image
+      ? p.image.replace(
+          /^http:\/\/localhost:\d+(?=\/uploads\/)/,
+          BACKEND_URL
+        )
+      : "",
+
     stock: p.stock,
   };
 }
 
-// Kiểm tra thông tin sản phẩm
 function validateProduct(body) {
   const {
     name,
@@ -244,13 +254,12 @@ function getProductId(req) {
 app.get("/api/health", (req, res) => {
   res.json({
     success: true,
-    message: "Milk.shop Backend đang hoạt động!",
+    message: "Milk.club Backend đang hoạt động!",
   });
 });
 
 // ================= LẤY SẢN PHẨM =================
 
-// Lấy tất cả sản phẩm
 app.get("/api/products", async (req, res) => {
   try {
     const result = await pool.query(
@@ -301,7 +310,6 @@ app.get("/api/products/:id", async (req, res) => {
 
 // ================= THÊM SẢN PHẨM =================
 
-// Chỉ tài khoản seller được thêm sản phẩm
 app.post(
   "/api/products",
   verifyToken,
@@ -318,9 +326,8 @@ app.post(
       });
     }
 
-    // Ảnh mới hoặc đường dẫn ảnh cũ
     const image = req.file
-      ? `http://localhost:${PORT}/uploads/${req.file.filename}`
+      ? `${BACKEND_URL}/uploads/${req.file.filename}`
       : typeof req.body.image === "string"
       ? req.body.image.trim()
       : "";
@@ -377,7 +384,6 @@ app.put(
     }
 
     try {
-      // Lấy ảnh hiện tại
       const existing = await pool.query(
         "SELECT * FROM products WHERE id = $1",
         [id]
@@ -394,7 +400,7 @@ app.put(
       const oldImage = existing.rows[0].image;
 
       const image = req.file
-        ? `http://localhost:${PORT}/uploads/${req.file.filename}`
+        ? `${BACKEND_URL}/uploads/${req.file.filename}`
         : oldImage;
 
       const result = await pool.query(
@@ -420,7 +426,6 @@ app.put(
         ]
       );
 
-      // Xóa ảnh cũ sau khi cập nhật thành công
       if (req.file) {
         removeLocalImage(oldImage);
       }
@@ -476,7 +481,8 @@ app.delete(
       console.error("Lỗi xóa sản phẩm:", error);
 
       return res.status(500).json({
-        message: "Không thể xóa sản phẩm. Sản phẩm có thể đang được sử dụng trong đơn hàng.",
+        message:
+          "Không thể xóa sản phẩm. Sản phẩm có thể đang được sử dụng trong đơn hàng.",
       });
     }
   }
