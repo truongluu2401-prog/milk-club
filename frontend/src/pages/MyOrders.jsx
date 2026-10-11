@@ -9,7 +9,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 
-const API_URL = "http://https://milk-club.onrender.com";
+const API_URL = "https://milk-club.onrender.com";
 
 const statusLabels = {
   pending: "Chờ xác nhận",

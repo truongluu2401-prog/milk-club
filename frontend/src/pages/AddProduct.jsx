@@ -153,7 +153,7 @@ export default function AddProduct() {
       formData.append("image", selectedImage);
 
       await axios.post(
-        "http://https://milk-club.onrender.com/api/products",
+        "https://milk-club.onrender.com/api/products",
         formData,
         {
           headers: {

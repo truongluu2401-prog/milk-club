@@ -38,7 +38,7 @@ export default function Login() {
 
     try {
       const response = await axios.post(
-        "http://https://milk-club.onrender.com/api/auth/login",
+        "https://milk-club.onrender.com/api/auth/login",
         {
           email: email.trim(),
           password,
